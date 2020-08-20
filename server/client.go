@@ -3370,7 +3370,6 @@ func (c *client) processServiceImport(si *serviceImport, acc *Account, msg []byt
 
 	acc.mu.RLock()
 	shouldReturn := si.invalid || acc.sl == nil
-	share := si.share
 	acc.mu.RUnlock()
 
 	if shouldReturn {
@@ -3383,9 +3382,6 @@ func (c *client) processServiceImport(si *serviceImport, acc *Account, msg []byt
 	// Check if there is a reply present and set up a response.
 	// TODO(dlc) - restrict to configured service imports and not responses?
 	tracking, headers := shouldSample(si.latency, c)
-	if !share {
-		headers = nil
-	}
 	if len(c.pa.reply) > 0 {
 		rsi = c.setupResponseServiceImport(acc, si, tracking, headers)
 		if rsi != nil {

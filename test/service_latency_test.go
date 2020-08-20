@@ -1435,7 +1435,7 @@ func TestServiceLatencyLossTest(t *testing.T) {
 		        users: [ {user: svc, password: pass} ]
 		        exports: [  {
 					service: "svc.echo"
-					threshold: "5s"
+					threshold: "500ms"
 					accounts: [CLIENT]
 					latency: {
 						sampling: headers
@@ -1472,7 +1472,7 @@ func TestServiceLatencyLossTest(t *testing.T) {
 	// Second message, in response to first request times out.
 	expectedState := map[int]int{1: http.StatusOK, 2: http.StatusGatewayTimeout}
 	msgCnt := 0
-	start := time.Now().Add(time.Second)
+	start := time.Now().Add(250 * time.Millisecond)
 
 	var latErr []error
 	// Listen for metrics
@@ -1527,7 +1527,7 @@ func TestServiceLatencyLossTest(t *testing.T) {
 			wg.Add(1)
 			go func() { // second request (use go routine to not block in responders callback)
 				defer wg.Done()
-				time.Sleep(time.Second)
+				time.Sleep(250 * time.Millisecond)
 				send("msg1") // will cause the first latency measurement
 			}()
 		}
@@ -1549,7 +1549,7 @@ func TestServiceLatencyLossTest(t *testing.T) {
 }
 
 func TestServiceLatencyHeaderTriggered(t *testing.T) {
-	receiveAndTest := func(t *testing.T, rsub *nats.Subscription, shared bool, header, value string, status int, srvName string) server.ServiceLatency {
+	receiveAndTest := func(t *testing.T, rsub *nats.Subscription, shared bool, header http.Header, status int, srvName string) server.ServiceLatency {
 		t.Helper()
 		var sl server.ServiceLatency
 		rmsg, _ := rsub.NextMsg(time.Second)
@@ -1569,14 +1569,12 @@ func TestServiceLatencyHeaderTriggered(t *testing.T) {
 		} else {
 			noShareCheck(t, &sl.Requestor)
 		}
-		if shared {
-			if v := sl.RequestHeader.Get(header); v != value {
-				t.Fatalf("Expected header set")
-			} else if v := sl.RequestHeader.Get("Some-Other"); v != "header" {
-				t.Fatalf("Expected header set")
-			}
-		} else {
-			if sl.RequestHeader != nil {
+		// header are always included
+		if v := sl.RequestHeader.Get("Some-Other"); v != "" {
+			t.Fatalf("Expected header to be gone")
+		}
+		for k, value := range header {
+			if v := sl.RequestHeader.Get(k); v != value[0] {
 				t.Fatalf("Expected header set")
 			}
 		}
@@ -1584,18 +1582,29 @@ func TestServiceLatencyHeaderTriggered(t *testing.T) {
 	}
 	for _, v := range []struct {
 		shared bool
-		header string
-		value  string
+		header http.Header
 	}{
-		{true, "Uber-Trace-Id", "479fefe9525eddb:479fefe9525eddb:0:1"},
-		{true, "X-B3-Sampled", "1"},
-		{true, "B3", "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"},
-		{true, "traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-
-		{false, "Uber-Trace-Id", "479fefe9525eddb:479fefe9525eddb:0:1"},
-		{false, "X-B3-Sampled", "1"},
-		{false, "B3", "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"},
-		{false, "traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+		{true, http.Header{"Uber-Trace-Id": []string{"479fefe9525eddb:479fefe9525eddb:0:1"}}},
+		{true, http.Header{"X-B3-Sampled": []string{"1"}}},
+		{true, http.Header{"X-B3-TraceId": []string{"80f198ee56343ba864fe8b2a57d3eff7"}}},
+		{true, http.Header{"B3": []string{"80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"}}},
+		{true, http.Header{"traceparent": []string{"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}}},
+		{false, http.Header{"Uber-Trace-Id": []string{"479fefe9525eddb:479fefe9525eddb:0:1"}}},
+		{false, http.Header{"X-B3-Sampled": []string{"1"}}},
+		{false, http.Header{"X-B3-TraceId": []string{"80f198ee56343ba864fe8b2a57d3eff7"}}},
+		{false, http.Header{"B3": []string{"80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"}}},
+		{false, http.Header{"traceparent": []string{"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}}},
+		{false, http.Header{
+			"X-B3-TraceId":      []string{"80f198ee56343ba864fe8b2a57d3eff7"},
+			"X-B3-ParentSpanId": []string{"05e3ac9a4f6e3b90"},
+			"X-B3-SpanId":       []string{"e457b5a2e4d86bd1"},
+			"X-B3-Sampled":      []string{"1"},
+		}},
+		{false, http.Header{
+			"X-B3-TraceId":      []string{"80f198ee56343ba864fe8b2a57d3eff7"},
+			"X-B3-ParentSpanId": []string{"05e3ac9a4f6e3b90"},
+			"X-B3-SpanId":       []string{"e457b5a2e4d86bd1"},
+		}},
 	} {
 		t.Run(fmt.Sprintf("%s_%t_%s", t.Name(), v.shared, v.header), func(t *testing.T) {
 			conf := createConfFile(t, []byte(fmt.Sprintf(`
@@ -1657,31 +1666,29 @@ func TestServiceLatencyHeaderTriggered(t *testing.T) {
 			msg := &nats.Msg{
 				Subject: "SVC",
 				Data:    []byte("1h"),
-				Header: http.Header{
-					v.header:     []string{v.value},
-					"Some-Other": []string{"header"},
-				},
+				Header:  v.header.Clone(),
 			}
-			if _, err := nc2.RequestMsg(msg, time.Second); err != nil {
+			msg.Header.Add("Some-Other", "value")
+			if _, err := nc2.RequestMsg(msg, 50*time.Millisecond); err != nil {
 				t.Fatalf("Expected a response")
 			}
-			sl := receiveAndTest(t, rsub, v.shared, v.header, v.value, http.StatusOK, srv.Name())
+			sl := receiveAndTest(t, rsub, v.shared, v.header, http.StatusOK, srv.Name())
 			checkServiceLatency(t, sl, start, serviceTime)
 			// shut down responder to test various error scenarios
 			sub.Unsubscribe()
 			nc.Flush()
 			// Send a request without responder
-			if _, err := nc2.RequestMsg(msg, time.Second); err == nil {
+			if _, err := nc2.RequestMsg(msg, 50*time.Millisecond); err == nil {
 				t.Fatalf("Expected no response")
 			}
-			receiveAndTest(t, rsub, v.shared, v.header, v.value, http.StatusServiceUnavailable, srv.Name())
+			receiveAndTest(t, rsub, v.shared, v.header, http.StatusServiceUnavailable, srv.Name())
 
 			// send a message without a response
 			msg.Reply = ""
 			if err := nc2.PublishMsg(msg); err != nil {
 				t.Fatalf("Expected no error got %v", err)
 			}
-			receiveAndTest(t, rsub, v.shared, v.header, v.value, http.StatusBadRequest, srv.Name())
+			receiveAndTest(t, rsub, v.shared, v.header, http.StatusBadRequest, srv.Name())
 		})
 	}
 }

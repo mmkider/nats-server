@@ -22,6 +22,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"reflect"
 	"sort"
@@ -1426,6 +1427,35 @@ func (a *Account) addAllServiceImportSubs() {
 	}
 }
 
+var (
+	trcUber = textproto.CanonicalMIMEHeaderKey("Uber-Trace-Id")
+	trcTp   = textproto.CanonicalMIMEHeaderKey("traceparent")
+	trcB3   = textproto.CanonicalMIMEHeaderKey("B3")
+	// openzipkin header to check
+	trcB3Sm = textproto.CanonicalMIMEHeaderKey("X-B3-Sampled")
+	trcB3Id = textproto.CanonicalMIMEHeaderKey("X-B3-TraceId")
+	// additional openzipkin header needed include
+	trcB3PSId = textproto.CanonicalMIMEHeaderKey("X-B3-ParentSpanId")
+	trcB3SId  = textproto.CanonicalMIMEHeaderKey("X-B3-SpanId")
+)
+
+func newB3Header(h http.Header) http.Header {
+	retHdr := http.Header{}
+	if v, ok := h[trcB3Sm]; ok {
+		retHdr[trcB3Sm] = v
+	}
+	if v, ok := h[trcB3Id]; ok {
+		retHdr[trcB3Id] = v
+	}
+	if v, ok := h[trcB3PSId]; ok {
+		retHdr[trcB3PSId] = v
+	}
+	if v, ok := h[trcB3SId]; ok {
+		retHdr[trcB3SId] = v
+	}
+	return retHdr
+}
+
 // Helper to determine when to sample. When header has a value, sampling is driven by header
 func shouldSample(l *serviceLatency, c *client) (bool, http.Header) {
 	if l == nil {
@@ -1444,7 +1474,7 @@ func shouldSample(l *serviceLatency, c *client) (bool, http.Header) {
 	if h == nil {
 		return false, nil
 	}
-	if tId := h.Get("Uber-Trace-Id"); tId != "" {
+	if tId := h.Get(trcUber); tId != "" {
 		tk := strings.Split(tId, ":")
 		if len(tk) == 4 && len(tk[3]) > 0 && len(tk[3]) <= 2 {
 			dst := [2]byte{}
@@ -1453,29 +1483,28 @@ func shouldSample(l *serviceLatency, c *client) (bool, http.Header) {
 				src[1] = tk[3][1]
 			}
 			if _, err := hex.Decode(dst[:], src[:]); err == nil && dst[0]&1 == 1 {
-				return true, h
+				return true, http.Header{trcUber: []string{tId}}
 			}
 		}
 		return false, nil
-	} else if sampled := h.Get("X-B3-Sampled"); sampled == "1" {
-		return true, h // allowed
+	} else if sampled := h.Get(trcB3Sm); sampled == "1" {
+		return true, newB3Header(h) // allowed
 	} else if sampled == "0" {
 		return false, nil // denied
-	} else if h.Get("X-B3-TraceId") != "" {
-		return true, h // sampling left to recipient
-	} else if b3 := h.Get("B3"); b3 != "" {
+	} else if tId := h.Get(trcB3Id); tId != "" {
+		return true, newB3Header(h) // sampling left to recipient
+	} else if b3 := h.Get(trcB3); b3 != "" {
 		tk := strings.Split(b3, "-")
 		if len(tk) > 2 && tk[2] == "0" {
 			return false, nil // denied
 		} else if len(tk) == 1 && tk[0] == "0" {
 			return false, nil // denied
 		}
-		// sampling allowed of left to recipient of header
-		return true, h
-	} else if trcP := h.Get("traceparent"); trcP != "" {
-		tk := strings.Split(trcP, "-")
+		return true, http.Header{trcB3: []string{b3}} // sampling allowed or left to recipient of header
+	} else if tId := h.Get(trcTp); tId != "" {
+		tk := strings.Split(tId, "-")
 		if len(tk) == 4 && len([]byte(tk[3])) == 2 && tk[3] == "01" {
-			return true, h
+			return true, http.Header{trcTp: []string{tId}}
 		} else {
 			return false, nil
 		}
