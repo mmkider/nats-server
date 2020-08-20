@@ -1427,16 +1427,14 @@ func (a *Account) addAllServiceImportSubs() {
 }
 
 var (
-	// Below comments show example content.
-	// [] is not part of the content and is used to highlight what field inside the value indicates tracing or not
 	// header where all information is encoded in one value.
-	trcUber = textproto.CanonicalMIMEHeaderKey("Uber-Trace-Id") // 479fefe9525eddb:5adb976bfc1f95c1:479fefe9525eddb:[1]
-	trcTp   = textproto.CanonicalMIMEHeaderKey("traceparent")   // 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-[01]
-	trcB3   = textproto.CanonicalMIMEHeaderKey("B3")            // 80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-[1]-05e3ac9a4f6e3b90
+	trcUber = textproto.CanonicalMIMEHeaderKey("Uber-Trace-Id")
+	trcTp   = textproto.CanonicalMIMEHeaderKey("Traceparent")
+	trcB3   = textproto.CanonicalMIMEHeaderKey("B3")
 	// openzipkin header to check
-	trcB3Sm = textproto.CanonicalMIMEHeaderKey("X-B3-Sampled") // [1]
-	trcB3Id = textproto.CanonicalMIMEHeaderKey("X-B3-TraceId") // Presence means may sample, if X-B3-Sampled does not rule it out
-	// additional openzipkin header needed include when present
+	trcB3Sm = textproto.CanonicalMIMEHeaderKey("X-B3-Sampled")
+	trcB3Id = textproto.CanonicalMIMEHeaderKey("X-B3-TraceId")
+	// additional openzipkin header needed to include when present
 	trcB3PSId = textproto.CanonicalMIMEHeaderKey("X-B3-ParentSpanId")
 	trcB3SId  = textproto.CanonicalMIMEHeaderKey("X-B3-SpanId")
 )
@@ -1476,8 +1474,9 @@ func shouldSample(l *serviceLatency, c *client) (bool, http.Header) {
 	if h == nil {
 		return false, nil
 	}
-	if tId := h.Get(trcUber); tId != "" {
-		tk := strings.Split(tId, ":")
+	if tId := h[trcUber]; len(tId) != 0 {
+		// sample 479fefe9525eddb:5adb976bfc1f95c1:479fefe9525eddb:1
+		tk := strings.Split(tId[0], ":")
 		if len(tk) == 4 && len(tk[3]) > 0 && len(tk[3]) <= 2 {
 			dst := [2]byte{}
 			src := [2]byte{'0', tk[3][0]}
@@ -1485,28 +1484,33 @@ func shouldSample(l *serviceLatency, c *client) (bool, http.Header) {
 				src[1] = tk[3][1]
 			}
 			if _, err := hex.Decode(dst[:], src[:]); err == nil && dst[0]&1 == 1 {
-				return true, http.Header{trcUber: []string{tId}}
+				return true, http.Header{trcUber: tId}
 			}
 		}
 		return false, nil
-	} else if sampled := h.Get(trcB3Sm); sampled == "1" {
+	} else if sampled := h[trcB3Sm]; len(sampled) != 0 && sampled[0] == "1" {
 		return true, newB3Header(h) // allowed
-	} else if sampled == "0" {
+	} else if len(sampled) != 0 && sampled[0] == "0" {
 		return false, nil // denied
-	} else if tId := h.Get(trcB3Id); tId != "" {
-		return true, newB3Header(h) // sampling left to recipient
-	} else if b3 := h.Get(trcB3); b3 != "" {
-		tk := strings.Split(b3, "-")
+	} else if _, ok := h[trcB3Id]; ok {
+		// sample 80f198ee56343ba864fe8b2a57d3eff7
+		// presence (with X-B3-Sampled not being 0) means sampling left to recipient
+		return true, newB3Header(h)
+	} else if b3 := h[trcB3]; len(b3) != 0 {
+		// sample 80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90
+		// sample 0
+		tk := strings.Split(b3[0], "-")
 		if len(tk) > 2 && tk[2] == "0" {
 			return false, nil // denied
 		} else if len(tk) == 1 && tk[0] == "0" {
 			return false, nil // denied
 		}
-		return true, http.Header{trcB3: []string{b3}} // sampling allowed or left to recipient of header
-	} else if tId := h.Get(trcTp); tId != "" {
-		tk := strings.Split(tId, "-")
+		return true, http.Header{trcB3: b3} // sampling allowed or left to recipient of header
+	} else if tId := h[trcTp]; len(tId) != 0 {
+		// sample 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+		tk := strings.Split(tId[0], "-")
 		if len(tk) == 4 && len([]byte(tk[3])) == 2 && tk[3] == "01" {
-			return true, http.Header{trcTp: []string{tId}}
+			return true, http.Header{trcTp: tId}
 		} else {
 			return false, nil
 		}
