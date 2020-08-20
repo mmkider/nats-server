@@ -805,12 +805,11 @@ func (a *Account) IsExportServiceTracking(service string) bool {
 type ServiceLatency struct {
 	TypedEvent
 
-	Status    int           `json:"status"`
-	Error     string        `json:"description,omitempty"`
-	Requestor LatencyClient `json:"requestor,omitempty"`
-	Responder LatencyClient `json:"responder,omitempty"`
-	// only contains a value if the header are shared by importer
-	RequestHeader  http.Header   `json:"header,omitempty"`
+	Status         int           `json:"status"`
+	Error          string        `json:"description,omitempty"`
+	Requestor      LatencyClient `json:"requestor,omitempty"`
+	Responder      LatencyClient `json:"responder,omitempty"`
+	RequestHeader  http.Header   `json:"header,omitempty"` // only contains header(s) triggering the measurement
 	RequestStart   time.Time     `json:"start"`
 	ServiceLatency time.Duration `json:"service"`
 	SystemLatency  time.Duration `json:"system"`
@@ -1428,13 +1427,16 @@ func (a *Account) addAllServiceImportSubs() {
 }
 
 var (
-	trcUber = textproto.CanonicalMIMEHeaderKey("Uber-Trace-Id")
-	trcTp   = textproto.CanonicalMIMEHeaderKey("traceparent")
-	trcB3   = textproto.CanonicalMIMEHeaderKey("B3")
+	// Below comments show example content.
+	// [] is not part of the content and is used to highlight what field inside the value indicates tracing or not
+	// header where all information is encoded in one value.
+	trcUber = textproto.CanonicalMIMEHeaderKey("Uber-Trace-Id") // 479fefe9525eddb:5adb976bfc1f95c1:479fefe9525eddb:[1]
+	trcTp   = textproto.CanonicalMIMEHeaderKey("traceparent")   // 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-[01]
+	trcB3   = textproto.CanonicalMIMEHeaderKey("B3")            // 80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-[1]-05e3ac9a4f6e3b90
 	// openzipkin header to check
-	trcB3Sm = textproto.CanonicalMIMEHeaderKey("X-B3-Sampled")
-	trcB3Id = textproto.CanonicalMIMEHeaderKey("X-B3-TraceId")
-	// additional openzipkin header needed include
+	trcB3Sm = textproto.CanonicalMIMEHeaderKey("X-B3-Sampled") // [1]
+	trcB3Id = textproto.CanonicalMIMEHeaderKey("X-B3-TraceId") // Presence means may sample, if X-B3-Sampled does not rule it out
+	// additional openzipkin header needed include when present
 	trcB3PSId = textproto.CanonicalMIMEHeaderKey("X-B3-ParentSpanId")
 	trcB3SId  = textproto.CanonicalMIMEHeaderKey("X-B3-SpanId")
 )
