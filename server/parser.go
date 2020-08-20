@@ -1183,8 +1183,7 @@ func (c *client) clonePubArg() error {
 
 func (ps *parseState) getHeader() http.Header {
 	if ps.header == nil {
-		hdr := ps.pa.hdr
-		if hdr > 0 {
+		if hdr := ps.pa.hdr; hdr > 0 {
 			reader := bufio.NewReader(bytes.NewReader(ps.msgBuf[0:hdr]))
 			tp := textproto.NewReader(reader)
 			tp.ReadLine() // skip over first line, contains version
